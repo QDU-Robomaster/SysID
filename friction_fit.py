@@ -26,7 +26,7 @@ def fit_friction(rows, metadata):
     selected = ((stage >= 10) & (stage <= 13) & (np.abs(q) <= gate)
                 & (np.abs(w) >= .06) & (w * ref > 0)
                 & (np.abs(np.abs(ref) - speeds[level]) <= .03 * speeds[level])
-                & (np.abs(w - ref) <= np.maximum(.015, .10 * speeds[level]))
+                & (np.abs(w - ref) <= np.maximum(.015, .35 * speeds[level]))
                 & (np.abs(alpha) <= .4) & (np.abs(ref_alpha) <= .15)
                 & ((flags & 5) == 0))
     selected[0] = selected[-1] = False
@@ -72,8 +72,12 @@ def fit_friction(rows, metadata):
     report['quality'] = dict(duration_s=float(a[-1, 0]), central_gate_rad=gate,
                              acceleration_gate_rad_s2=.4, selected_samples=int(selected.sum()),
                              speed_coverage=coverage)
+    medians = [float(np.median(np.abs(w[selected & (level == n)]))) if np.any(selected & (level == n)) else 0. for n in range(4)]
+    enough &= all(b - a >= .025 for a,b in zip(medians, medians[1:]))
+    enough &= medians[0] > 0 and medians[-1] >= 2 * medians[0] and medians[-1] - medians[0] >= .15
+    report['quality']['measured_speed_levels_rad_s'] = medians
     if not enough:
-        report['warnings'].append('Insufficient steady traversals: need >=4 samples and >=2 traversals per direction at every speed. No b/fc result reported.')
+        report['warnings'].append('Insufficient steady traversals: need >=4 samples and >=2 traversals per direction at every speed. Actual speeds must also remain distinct and span >=0.15 rad/s. No b/fc result reported.')
         return report
 
     x = np.column_stack((w[selected], np.sign(w[selected]), q[selected], np.ones(selected.sum())))

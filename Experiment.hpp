@@ -101,6 +101,7 @@ public:
   volatile TestMode test_mode_ = TestMode::PRBS;
   FrictionSweep::Param sweep_param_{};
   volatile float omega_ref_ = 0;
+  volatile float omega_control_ = 0;
   volatile uint32_t sweep_leg_ = 0;
   // V3 adapter supplies full-rate gyro integrals. Core-only reference mode
   // stays endpoint-based so the restored experiment can be regression-tested.
@@ -180,6 +181,7 @@ public:
             sweep_.Step(input.position - H.center, input.omega_gyro, input.dt);
         stage_ = sweep_.Stage();
         omega_ref_ = sweep_.Reference();
+        omega_control_ = sweep_.FilteredSpeed();
         sweep_leg_ = sweep_.Leg();
         if (sweep_.Done())
           return Stop(DONE, &input);
@@ -299,7 +301,9 @@ private:
         Stop(INVALID_INPUT);
         return false;
       }
-      h.reserved_flags = 1U | (P.repeats << 8);
+      h.reserved_flags =
+          1U | (P.repeats << 8) |
+          (static_cast<uint32_t>(std::lround(P.speed_filter_hz * 1000)) << 16);
       h.amplitude = P.speed1;
       h.hold_fast_s = P.speed2;
       h.hold_mid_s = P.speed3;

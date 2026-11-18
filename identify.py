@@ -51,7 +51,7 @@ def decode(raw):
     meta=dict(zip(names,struct.unpack_from('<17f',raw,32)))
     meta.update(status=status,status_text='done' if status==2 else 'stopped status '+str(status),count=count,seed=seed,format_version='interval-v3' if version==3 else 'restored-v2')
     friction = bool(reserved & 1)
-    if reserved & ~0xff01 or (friction and version != 3):
+    if (reserved & 0xfe) or (not friction and reserved) or (friction and version != 3):
         raise ValueError('Unknown capture mode/flags.')
     meta['test_mode'] = 'friction-sweep' if friction else 'prbs'
     if friction:
@@ -59,11 +59,12 @@ def decode(raw):
         speeds = [meta.pop('amplitude'), meta.pop('hold_fast_s'), meta.pop('hold_mid_s'), meta.pop('hold_slow_s')]
         if not all(math.isfinite(v) and v > 0 for v in [stroke, accel, speed_kp, speed_ki, *speeds]) or not all(a < b for a,b in zip(speeds, speeds[1:])):
             raise ValueError('Corrupt friction sweep settings.')
-        if not 2 <= (reserved >> 8) <= 5:
+        if not 2 <= ((reserved >> 8) & 255) <= 5 or (reserved >> 16) > 50000:
             raise ValueError('Corrupt friction sweep repeat count.')
         meta.update(sweep_speeds_rad_s=speeds, sweep_stroke_rad=stroke,
                     sweep_acceleration_rad_s2=accel, sweep_speed_kp=speed_kp,
-                    sweep_speed_ki=speed_ki, sweep_repeats=(reserved >> 8) & 255)
+                    sweep_speed_ki=speed_ki, sweep_repeats=(reserved >> 8) & 255,
+                    sweep_speed_filter_hz=(reserved >> 16) / 1000.)
     valid_stages = (0, 5, 6, 7, 10, 11, 12, 13) if friction else (0, 1, 2, 3, 4)
     rows=[struct.unpack_from('<10f2I',raw,128+48*i) for i in range(count)]
     if rows[0][0]!=0:raise ValueError('Initial sample missing.')
