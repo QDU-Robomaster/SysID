@@ -1,4 +1,4 @@
-"""Decode an IMU-based MotorIdentifier PRBS dump (restored hex Size 12080).
+"""Decode an IMU-based PRBS or multi-speed friction dump (hex Size 12080).
 
 Optional --fit estimates local J,b with Coulomb, stiffness and offset nuisance
 terms. Results are candidates: a second capture with a new seed is validation.
@@ -50,10 +50,25 @@ def decode(raw):
     names=['center','min_position','max_position','amplitude','kp','kd','torque_limit','max_travel','settle_s','excite_s','return_s','log_period_s','hold_fast_s','hold_mid_s','hold_slow_s','torque_constant','command_quantum']
     meta=dict(zip(names,struct.unpack_from('<17f',raw,32)))
     meta.update(status=status,status_text='done' if status==2 else 'stopped status '+str(status),count=count,seed=seed,format_version='interval-v3' if version==3 else 'restored-v2')
+    friction = bool(reserved & 1)
+    if reserved & ~0xff01 or (friction and version != 3):
+        raise ValueError('Unknown capture mode/flags.')
+    meta['test_mode'] = 'friction-sweep' if friction else 'prbs'
+    if friction:
+        stroke, accel, speed_kp, speed_ki = struct.unpack_from('<4f', raw, 112)
+        speeds = [meta.pop('amplitude'), meta.pop('hold_fast_s'), meta.pop('hold_mid_s'), meta.pop('hold_slow_s')]
+        if not all(math.isfinite(v) and v > 0 for v in [stroke, accel, speed_kp, speed_ki, *speeds]) or not all(a < b for a,b in zip(speeds, speeds[1:])):
+            raise ValueError('Corrupt friction sweep settings.')
+        if not 2 <= (reserved >> 8) <= 5:
+            raise ValueError('Corrupt friction sweep repeat count.')
+        meta.update(sweep_speeds_rad_s=speeds, sweep_stroke_rad=stroke,
+                    sweep_acceleration_rad_s2=accel, sweep_speed_kp=speed_kp,
+                    sweep_speed_ki=speed_ki, sweep_repeats=(reserved >> 8) & 255)
+    valid_stages = (0, 5, 6, 7, 10, 11, 12, 13) if friction else (0, 1, 2, 3, 4)
     rows=[struct.unpack_from('<10f2I',raw,128+48*i) for i in range(count)]
     if rows[0][0]!=0:raise ValueError('Initial sample missing.')
     for i,r in enumerate(rows):
-        if not all(math.isfinite(v) for v in r[:10]) or r[10]>4 or r[11]&~7 or (i and r[0]<=rows[i-1][0]):raise ValueError('Corrupt restored sample.')
+        if not all(math.isfinite(v) for v in r[:10]) or r[10] not in valid_stages or r[11]&~7 or (i and r[0]<=rows[i-1][0]):raise ValueError('Corrupt restored sample.')
     return rows,meta
 
 
@@ -222,12 +237,22 @@ def main():
         rows, metadata = decode(args.binary.read_bytes())
         out = args.out or args.binary.with_suffix('.csv')
         with out.open('w', newline='', encoding='utf-8') as f:
-            writer = csv.writer(f); writer.writerow(COLUMNS)
-            writer.writerows(tuple(r[i] for i in (0,1,2,3,4,5,10,11)) for r in rows)
+            writer = csv.writer(f)
+            friction = metadata.get('test_mode') == 'friction-sweep'
+            columns = COLUMNS[:6] + (['velocity_reference_mean_rad_s', 'controller_torque_mean_nm', 'pitch_rad', 'position_mean_rad'] if friction else []) + COLUMNS[6:]
+            writer.writerow(columns)
+            indices = tuple(range(12)) if friction else (0,1,2,3,4,5,10,11)
+            writer.writerows(tuple(r[i] for i in indices) for r in rows)
         out.with_suffix('.metadata.json').write_text(json.dumps(metadata, indent=2), encoding='utf-8')
         if args.fit:
-            result = fit_candidates(rows, metadata, args.fixed_j)
-            if metadata.get('format_version')=='interval-v3':
+            if metadata.get('test_mode') == 'friction-sweep':
+                if args.fixed_j is not None:
+                    raise ValueError('command=2 near-steady fit does not use --fixed-j.')
+                from friction_fit import fit_friction
+                result = fit_friction(rows, metadata)
+            else:
+                result = fit_candidates(rows, metadata, args.fixed_j)
+            if metadata.get('format_version')=='interval-v3' and metadata.get('test_mode') != 'friction-sweep':
                 result['input_delay_check']=check_input_delays(rows,metadata,args.fixed_j)
             out.with_suffix('.fit.json').write_text(json.dumps(result, indent=2), encoding='utf-8')
             print(json.dumps(result, indent=2))

@@ -31,6 +31,7 @@ int main() {
   assert(motor.relaxes == 1 && entry.min_position_ == -2 &&
          entry.max_position_ == -1);
   assert(entry.amplitude_ == .08f && entry.kp_ == 3 && entry.seed_ == 123);
+  assert(entry.sweep_param_.speed4 == .5f && entry.sweep_param_.speed_ki == 30);
   p.feedback_id = 0x800;
   SysID invalid(motor, can, p);
   assert(!invalid.ready_ && LibXR::Thread::created == 1);

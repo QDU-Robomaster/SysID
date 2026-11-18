@@ -14,6 +14,7 @@ if compiler is None:
 with tempfile.TemporaryDirectory(prefix='sysid-test-') as folder:
     output = Path(folder)
     for name, source, extra in (
+        ('sweep', 'friction_sweep_test.cpp', []),
         ('core', 'motor_sysid_test.cpp', []),
         ('adapter', 'motor_identifier_test.cpp', ['-I', str(root/'tests/stubs')]),
         ('entry', 'sysid_entry_test.cpp', ['-I', str(root/'tests/stubs')]),
@@ -25,6 +26,7 @@ with tempfile.TemporaryDirectory(prefix='sysid-test-') as folder:
                         '-Werror', *extra, '-I', str(root),
                         str(root/'tests'/source), '-o', str(binary)], check=True)
         subprocess.run([str(binary), str(output)], check=True)
+    subprocess.run([sys.executable, str(root/'tests/friction_fit_test.py'), str(output)], check=True)
     subprocess.run([sys.executable, str(root/'tests/test_identify.py'),
                     str(output)], check=True)
 subprocess.run([sys.executable,str(root/'tests/noisy_interval_fit_test.py')],check=True)

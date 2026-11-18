@@ -1,5 +1,6 @@
 #pragma once
 
+#include "FrictionSweep.hpp"
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
@@ -35,7 +36,8 @@ public:
     TX_QUEUE_FAILED = 15,
     MANUAL_STOP = 16,
     BAD_DT = 17,
-    TX_NOT_OBSERVED = 18
+    TX_NOT_OBSERVED = 18,
+    SWEEP_TIMEOUT = 19
   };
   enum Flag : uint32_t { SATURATED = 1, MOTOR_REUSED = 2, GYRO_REUSED = 4 };
   static constexpr uint32_t CAPACITY = 1536;
@@ -95,6 +97,11 @@ public:
   volatile float max_position_ = 1000000.0f;
   volatile uint32_t seed_ = 0xACE1;
   Capture capture_{};
+  enum class TestMode : uint32_t { PRBS = 0, FRICTION = 1 };
+  volatile TestMode test_mode_ = TestMode::PRBS;
+  FrictionSweep::Param sweep_param_{};
+  volatile float omega_ref_ = 0;
+  volatile uint32_t sweep_leg_ = 0;
   // V3 adapter supplies full-rate gyro integrals. Core-only reference mode
   // stays endpoint-based so the restored experiment can be regression-tested.
   bool interval_measurements_ = false;
@@ -160,6 +167,35 @@ public:
       return Stop(PITCH_MOVED, &input);
     if (interval_ >= H.log_period_s && !Record(input))
       return Stop(BUFFER_FULL);
+    if (latched_mode_ == TestMode::FRICTION) {
+      if (time_ >= sweep_timeout_)
+        return Stop(SWEEP_TIMEOUT, &input);
+      float raw = 0;
+      if (time_ < H.settle_s) {
+        raw = -H.kp * (input.position - H.center) - H.kd * input.omega_gyro;
+        stage_ = 0;
+        omega_ref_ = 0;
+      } else {
+        raw =
+            sweep_.Step(input.position - H.center, input.omega_gyro, input.dt);
+        stage_ = sweep_.Stage();
+        omega_ref_ = sweep_.Reference();
+        sweep_leg_ = sweep_.Leg();
+        if (sweep_.Done())
+          return Stop(DONE, &input);
+      }
+      const float REQUEST = std::clamp(raw, -H.torque_limit, H.torque_limit);
+      previous_tau_ = REQUEST;
+      previous_prbs_ = omega_ref_;
+      previous_pd_ = REQUEST;
+      previous_saturated_ =
+          raw != REQUEST || (time_ >= H.settle_s && sweep_.Saturated());
+      previous_stage_ = stage_;
+      tau_cmd_ = REQUEST;
+      prbs_ = omega_ref_;
+      pd_ = REQUEST;
+      return REQUEST;
+    }
     if (time_ >= H.settle_s + H.excite_s + H.return_s)
       return Stop(DONE, &input);
 
@@ -248,6 +284,37 @@ private:
     h.hold_slow_s = 0.25f;
     h.torque_constant = torque_constant_;
     h.command_quantum = command_quantum_;
+    latched_mode_ = test_mode_;
+    if (latched_mode_ != TestMode::PRBS &&
+        latched_mode_ != TestMode::FRICTION) {
+      Stop(INVALID_INPUT);
+      return false;
+    }
+    if (latched_mode_ == TestMode::FRICTION) {
+      const auto P = sweep_param_;
+      if (!interval_measurements_ ||
+          !sweep_.Reset(P, h.torque_limit, h.max_travel) ||
+          input.position - P.stroke <= h.min_position + .02f ||
+          input.position + P.stroke >= h.max_position - .02f) {
+        Stop(INVALID_INPUT);
+        return false;
+      }
+      h.reserved_flags = 1U | (P.repeats << 8);
+      h.amplitude = P.speed1;
+      h.hold_fast_s = P.speed2;
+      h.hold_mid_s = P.speed3;
+      h.hold_slow_s = P.speed4;
+      h.excite_s = P.timeout_s - 3;
+      h.return_s = 1;
+      h.log_period_s = .02f;
+      h.reserved[0] = P.stroke;
+      h.reserved[1] = P.acceleration;
+      h.reserved[2] = P.speed_kp;
+      h.reserved[3] = P.speed_ki;
+      sweep_timeout_ = P.timeout_s;
+      omega_ref_ = 0;
+      sweep_leg_ = 0;
+    }
     count_ = 0;
     done_ = false;
     time_ = 0.0f;
@@ -275,7 +342,9 @@ private:
         return false;
       }
     }
-    if (!Finite(input) || h.amplitude <= 0.0f || h.amplitude > h.torque_limit ||
+    if (!Finite(input) ||
+        (latched_mode_ == TestMode::PRBS &&
+         (h.amplitude <= 0.0f || h.amplitude > h.torque_limit)) ||
         h.kp <= 0.0f || h.kd < 0.0f || h.torque_limit > 0.5f ||
         h.max_travel <= 0.005f || h.max_travel > 0.2f || h.seed == 0 ||
         h.seed > 65535 || h.min_position + 0.015f >= h.center ||
@@ -356,6 +425,9 @@ private:
     pd_ = 0.0f;
     return 0.0f;
   }
+  FrictionSweep sweep_;
+  TestMode latched_mode_ = TestMode::PRBS;
+  float sweep_timeout_ = 30;
   float position_integral_ = 0, previous_position_ = 0, last_gyro_area_ = 0;
   uint64_t last_gyro_stamp_ = 0;
   bool active_ = false, previous_saturated_ = false;

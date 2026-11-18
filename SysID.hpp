@@ -54,6 +54,7 @@ public:
     float torque_constant = 0.0f;
     uint32_t seed = 0xACE1;
     uint32_t task_stack_depth = 2048;
+    SysId::FrictionSweep::Param sweep = {};
   };
 
   // motor/can_bus refer to an existing motor and its actual CAN bus.
@@ -88,6 +89,7 @@ public:
     kd_ = param.kd;
     torque_limit_ = param.torque_limit;
     seed_ = param.seed;
+    sweep_param_ = param.sweep;
     command_ = 0;
     controlled_motor_.Relax();
     ready_ = true;

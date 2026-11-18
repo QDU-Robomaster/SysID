@@ -124,6 +124,24 @@ int main() {
   LibXR::Timebase::now += 2000;
   id.Poll();
   assert(id.status_ == Status::PITCH_MOVED);
+  Imu();
+  physical.Receive();
+  id.command_ = 2;
+  LibXR::Timebase::now += 2000;
+  id.Poll();
+  assert(id.status_ == Status::RUNNING);
+  assert(id.capture_.header.reserved_flags & 1);
+  for (int n = 0; n < 1100; ++n) {
+    LibXR::Timebase::now += 2000;
+    Imu();
+    physical.Receive();
+    id.Poll();
+  }
+  assert(id.stage_ == 5 && motor.output < 0);
+  assert(std::fabs(id.tau_cmd_ - observed.Torque()) < 1e-7f);
+  id.command_ = 1;
+  id.Poll();
+  assert(id.status_ == Status::INVALID_COMMAND && motor.output == 0);
   std::cout << "PASS: observed packed torque/queue failure, CAN interrupt "
                "race, stop/freeze, feedback/pitch exits.\n";
 }

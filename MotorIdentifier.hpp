@@ -46,7 +46,7 @@ public:
                uint32_t axis = 2, float sign = 1, float pitch_zero = 0) {
     return imu_.Bind(gyro_topic, euler_topic, axis, sign, pitch_zero);
   }
-  // command=1 start, command=0 stop/idle. Instantiation never starts a test.
+  // 0 stop/idle; 1 PRBS; 2 multi-speed b/fc sweep. Never starts on boot.
   volatile uint32_t command_ = 0;
   volatile float omega_imu_ = 0, omega_motor_ = 0, pitch_imu_ = 0, theta_ = 0;
   bool Busy() const { return session_active_ || command_ != 0; }
@@ -68,15 +68,19 @@ public:
       return Finish(BAD_INPUT);
     if (COMMAND == 0)
       return Finish(MANUAL_STOP);
-    if (COMMAND != 1)
+    if (COMMAND != 1 && COMMAND != 2)
       return Finish(INVALID_COMMAND);
     if (!session_active_) {
+      run_command_ = COMMAND;
+      test_mode_ = COMMAND == 1 ? TestMode::PRBS : TestMode::FRICTION;
       session_active_ = true;
       start_us_ = NOW;
       last_enable_us_ = 0;
       dt = .002f;
       enable_ = true;
     }
+    if (COMMAND != run_command_)
+      return Finish(INVALID_COMMAND);
     const uint32_t RX = rx_count_;
     const bool MOTOR_NEW = RX != last_rx_count_;
     motor_->Update();
@@ -143,7 +147,7 @@ private:
   float feedback_torque_sign_ = 1;
   bool session_active_ = false;
   volatile uint32_t last_rx_us_ = 0, rx_count_ = 0;
-  uint32_t last_rx_count_ = 0;
+  uint32_t last_rx_count_ = 0, run_command_ = 0;
   uint64_t last_poll_us_ = 0, start_us_ = 0, last_enable_us_ = 0;
 };
 } // namespace SysId
