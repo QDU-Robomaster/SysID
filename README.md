@@ -65,11 +65,11 @@
 1. 在 Modules/sources.yaml 的 sources 列表增加：
 
 ```yaml
-- url: https://raw.githubusercontent.com/MonaFan1/SysID/main/index.yaml
+- url: https://raw.githubusercontent.com/QDU-Robomaster/SysID/main/index.yaml
   priority: 0
 ```
 
-2. 在 Modules/modules.yaml 的 modules 列表增加 MonaFan1/SysID@main。
+2. 在 Modules/modules.yaml 的 modules 列表增加 QDU-Robomaster/SysID@main。
    SysID.hpp 的 depends 自动拉取 Motor、RMMotor、DMMotor、BMI088、MadgwickAHRS。
 3. 参考 [examples/small_yaw.yaml](examples/small_yaw.yaml)，依次实例化 IMU、AHRS、电机、SysID。
 4. **电机的 can_bus 使用 SysID::Observe(can1)，SysID 的 can_bus 使用实际 can1。**

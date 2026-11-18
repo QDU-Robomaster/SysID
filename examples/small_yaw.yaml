@@ -40,7 +40,7 @@ modules:
       model: RMMotor::Model::MOTOR_GM6020
       reverse: true
       feedback_id: 517
-- module: MonaFan1/SysID
+- module: QDU-Robomaster/SysID
   id: g_sysid
   args:
   - motor: motor_yaw
